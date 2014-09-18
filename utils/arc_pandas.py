@@ -1,0 +1,133 @@
+"""
+Use this module to integrate ArcGIS data objects
+with pandas.
+
+Dependencies & caveats:
+- Written and tested w/ ArcGIS 10.2.1 (build 3497)
+- Must have ArcGIS desktop 64 bit background geoprocessing installed
+- Not intended to run w/in the default ArcGIS python distribution, instead
+    run w/in a scientific distribution like winpython or anaconda
+- Must have the following in the python path of the distribution:
+    - path to ArcGIS 64 bit bin:
+        C:\Program Files (x86)\ArcGIS\Desktop10.2\bin64
+    - path to arcpy:
+        C:\Program Files (x86)\ArcGIS\Desktop10.2\arcpy
+
+Expected workspaces:
+- Shapefile and dbase table: full path to folder location
+- File geodatabase: full path to geodatabse (.gdb folder)
+- Database: full path .sde file
+
+"""
+import numpy as np
+import pandas as pd
+import arcpy
+
+
+def arc_to_pandas(workspace_path, class_name, index_fld=None, flds=None):
+    """
+    Used to import an ArcGIS data class into a pandas data frame.
+
+    Parameters:
+    ----------
+    workspace_path: string
+        Full path to ArcGIS workspace location.
+    class_name: string
+        name of the feature class or table to import.
+    index_fld: string, optional, default None
+        Name of field to serve as pandas index. If not provided
+        an auto-generated index will be used. The index does not need
+        to be unique.
+    flds: string, optional, default None
+        List of fields to include in the data frame. If not provided all
+        fields w/ valid types will be imported. Valid field types are
+        double, single (float), integer (long), small integer(short)
+        and text. Non-valid fields will be ignored. No data values will
+        be converted to -1 for all numeric types and empty string for text.
+
+    Returns
+    -------
+    pandas.DataFrame
+
+    """
+    # update the workspace
+    arcpy.env.workspace = workspace_path
+
+    # define valid field types and null replacement values
+    valid_field_types = {
+        "Double": -1,
+        "Integer": -1,
+        "Single": -1,
+        "SmallInteger": -1,
+        "String": ""}
+
+    # get valid fields based on their type, assign null replacement values
+    fld_names = []
+    null_dict = {}
+
+    for fld in arcpy.ListFields(class_name):
+        if flds is None or fld.name in flds:
+            if fld.type in valid_field_types:
+                fld_names.append(str(fld.name))
+                null_dict[str(fld.name)] = valid_field_types[str(fld.type)]
+
+    # convert feature attributes to numpy array (structured array)
+    arr = arcpy.da.TableToNumPyArray(class_name, fld_names, null_value=null_dict)
+
+    # convert the structured array to a pandas data frame
+    df = pd.DataFrame(arr)
+
+    # set the index if provided
+    if index_fld is not None:
+        df.set_index(index_fld, inplace=True)
+        df.sort(inplace=True)
+
+    return df
+
+
+def pandas_to_arc(df, workspace_path, class_name, bool keep_index=True):
+    """
+    Used to export a pandas data frame to an ArcGIS table.
+
+    Parameters:
+    ----------
+    df: pandas.DataFrame
+        Data frame to export.
+     workspace_path: string
+        Full path to ArcGIS workspace location.
+    class_name: string
+        name of the output table.
+    keep_index: bool, optional, default True
+        If True, column(s) will be created from the index.
+
+    """
+
+    # push the index into columns
+    if keep_index:
+        df = df.reset_index()
+
+    # put the pandas series into a dictionary of arrays
+    arr_values = {}
+    arr_dtypes = {}
+
+    for col in df:
+        arr = df[col].values
+
+        # convert types to make ArcGIS happy
+        if arr.dtype == np.object:
+            arr = arr.astype(unicode)
+        if arr.dtype == np.int64:
+            arr = arr.astype(np.float64)
+        arr_values[col] = arr
+        arr_dtypes[col] = arr.dtype
+
+    # create the structured array
+    s_arr = np.empty(len(df), dtype=arr_dtypes)
+    for col in arr_values:
+        s_arr[col] = arr_values[col]
+
+    # now send to arc
+    arcpy.da.NumPyArrayToTable(s_arr, workspace_path + "//" + class_name)
+
+
+
