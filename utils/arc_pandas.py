@@ -85,7 +85,7 @@ def arc_to_pandas(workspace_path, class_name, index_fld=None, flds=None):
     return df
 
 
-def pandas_to_arc(df, workspace_path, class_name, bool keep_index=True):
+def pandas_to_arc(df, workspace_path, output_table, keep_index=True, cols=None, get_cursor=False, overwrite=False):
     """
     Used to export a pandas data frame to an ArcGIS table.
 
@@ -95,10 +95,28 @@ def pandas_to_arc(df, workspace_path, class_name, bool keep_index=True):
         Data frame to export.
      workspace_path: string
         Full path to ArcGIS workspace location.
-    class_name: string
+    output_table: string
         name of the output table.
     keep_index: bool, optional, default True
         If True, column(s) will be created from the index.
+    cols: list <string>, optional, default None:
+        List of fields/columns to include in output, if not provided
+        all fields will be exported. Also, include index names here.
+    get_cursor: bool, optional, default False
+        If True, returns list of fields and an arcpy search cursor.
+    overwrite: bool, optional, default False
+        If True, an existing table will be overwritten. If False,
+        and a table already exists, an error will be thrown. Note:
+        ArcGIS is sometime weird about schema locks, so an exception
+        could potentially be thrown if there is an outstanding cursor.
+
+    Returns
+    -------
+    out_flds: list<string>
+        Dictionary of field names in the result, keys are field names
+        and values are indexes in the row.
+    rows: iterator of tuples
+        Returns the results of arcpy.da.SearchCursor() on the exported result.
 
     """
 
@@ -108,26 +126,59 @@ def pandas_to_arc(df, workspace_path, class_name, bool keep_index=True):
 
     # put the pandas series into a dictionary of arrays
     arr_values = {}
-    arr_dtypes = {}
+    arr_dtypes = []
 
-    for col in df:
+    if cols is None:
+        cols = df.columns
+
+    for col in cols:
         arr = df[col].values
 
         # convert types to make ArcGIS happy
         if arr.dtype == np.object:
             arr = arr.astype(unicode)
         if arr.dtype == np.int64:
-            arr = arr.astype(np.float64)
+            max_val = arr.max()
+            min_val = arr.min()
+            if min_val < -2147483647 or max_val > 2147483647:
+                arr = arr.astype(np.float64)
+            else:
+                arr = arr.astype(np.int32)
+        if arr.dtype == np.bool:
+            arr = arr.astype(np.int32)
+
         arr_values[col] = arr
-        arr_dtypes[col] = arr.dtype
+        arr_dtypes.append((col, arr.dtype))
 
     # create the structured array
     s_arr = np.empty(len(df), dtype=arr_dtypes)
     for col in arr_values:
         s_arr[col] = arr_values[col]
 
-    # now send to arc
-    arcpy.da.NumPyArrayToTable(s_arr, workspace_path + "//" + class_name)
+    # now export to arc
+    old_workspace = arcpy.env.workspace
+    arcpy.env.workspace = workspace_path
 
+    if overwrite:
+        # delete existing table it if it exists
+        if output_table in arcpy.ListTables():
+            arcpy.Delete_management(output_table)
 
+    arcpy.da.NumPyArrayToTable(s_arr, workspace_path + "/" + output_table)
+    if get_cursor:
+        fld_names = []
+        out_flds = {}
+        fld_idx = 0
+        for curr_fld in arcpy.ListFields(output_table):
+            fld_names.append(curr_fld.name)
+            out_flds[curr_fld.name] = fld_idx
+            fld_idx += 1
+        rows = arcpy.da.SearchCursor(output_table, fld_names)
+    else:
+        out_flds = None
+        rows = None
 
+    # return the results
+    if old_workspace is not None:
+        arcpy.env.workspace = old_workspace
+    return out_flds, rows
