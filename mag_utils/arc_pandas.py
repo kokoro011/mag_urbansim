@@ -85,7 +85,13 @@ def arc_to_pandas(workspace_path, class_name, index_fld=None, flds=None):
     return df
 
 
-def pandas_to_arc(df, workspace_path, output_table, keep_index=True, cols=None, get_cursor=False, overwrite=False):
+def pandas_to_arc(df,
+                  workspace_path,
+                  output_table,
+                  keep_index=True,
+                  cols=None,
+                  get_cursor=False,
+                  overwrite=False):
     """
     Used to export a pandas data frame to an ArcGIS table.
 
@@ -103,7 +109,8 @@ def pandas_to_arc(df, workspace_path, output_table, keep_index=True, cols=None, 
         List of fields/columns to include in output, if not provided
         all fields will be exported. Also, include index names here.
     get_cursor: bool, optional, default False
-        If True, returns list of fields and an arcpy search cursor.
+        If True, returns dictionary with field info and an
+        arcpy search cursor.
     overwrite: bool, optional, default False
         If True, an existing table will be overwritten. If False,
         and a table already exists, an error will be thrown. Note:
@@ -112,7 +119,7 @@ def pandas_to_arc(df, workspace_path, output_table, keep_index=True, cols=None, 
 
     Returns
     -------
-    out_flds: list<string>
+    out_flds: dictionary<string,int>
         Dictionary of field names in the result, keys are field names
         and values are indexes in the row.
     rows: iterator of tuples
